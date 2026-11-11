@@ -33,6 +33,9 @@ def run_agent(question, provider, tools, max_steps=6):
     usage = []
     answer = ''
 
+    # CP4 bổ sung danh sách lưu URL
+    observed_incident_urls = []
+
     # Vòng lặp ReAct giới hạn max_steps
     for step in range(1, max_steps + 1):
         # Gọi model
@@ -87,6 +90,11 @@ def run_agent(question, provider, tools, max_steps=6):
                 else:
                     # Thực thi tool
                     res = tools.execute(name, args)
+
+                    # CP4 bổ sung nếu tool trả về URL incident, lưu vào danh sách
+                    if isinstance(res, dict) and res.get('ok') and res.get('url'):
+                        observed_incident_urls.append(res['url'])
+
                     trace.append({'event': 'tool', 'step': step, 'name': name, 'arguments': args, 'result': res})
                     messages.append({'role': 'tool', 'tool_call_id': call_id, 'content': json.dumps(res, ensure_ascii=False)})
             
@@ -103,6 +111,19 @@ def run_agent(question, provider, tools, max_steps=6):
             }
         # Model hoàn tất câu trả lời thành công
         answer = assistant_msg.get('content') or ''
+
+        # CP4 bổ sung kiểm tra URL nguồn
+        if observed_incident_urls and not any(u in answer for u in observed_incident_urls):
+            trace.append({'event': 'validation_missing_source', 'step': step, 'message': 'Missing incident source URL'})
+            if step < max_steps:
+                messages.append({
+                    'role': 'user',
+                    'content': 'Câu trả lời của bạn chưa dẫn nguồn URL từ incident đã tra cứu. Hãy bổ sung URL vào câu trả lời.'
+                })
+                continue
+            else:
+                return {'status': 'max_steps', 'answer': answer, 'trace': trace, 'usage': usage}
+
         return {'status': 'completed', 'answer': answer, 'trace': trace, 'usage': usage}
     # Hết số bước cho phép mà chưa xong
     return {'status': 'max_steps', 'answer': answer, 'trace': trace, 'usage': usage}
